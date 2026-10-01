@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# sashiko-run HASH -- launch ONE sashiko review of HASH as a single-instance,
+# memory-capped, self-cleaning job, via the generic `run-singleton` helper.
+#
+# Meant to be called by an agent with run_in_background: it BLOCKS until the
+# review finishes (run-singleton -> systemd-run --wait), so the harness's
+# completion notification for the backgrounded command IS the "review done"
+# signal -- no polling loop, nothing to ghost. The exit status + log land in the
+# run-singleton result sentinel (~/.cache/claude-scratch/run-singleton/sashiko.result).
+#
+# Layering, one concern each:
+#   run-singleton        -- mutex (fixed unit name), MemoryMax cap, ExecStopPost
+#                           cleanup + result sentinel, blocking completion.
+#     sashiko-watchdog.sh -- PROGRESS watchdog (kills a stalled review, rc=111).
+#       sashiko-gemini.sh -- the actual paid Gemini review.
+#
+# SASHIKO_UNDER_CLIMIT=1 stops sashiko-gemini.sh from re-exec-ing under climit
+# (a SIBLING cgroup that would escape run-singleton's unit cap); the review runs
+# INSIDE the transient unit, so run-singleton's MemoryMax is the single, real
+# cap -- and the unit is already isolated from the agent session's cgroup, which
+# is the only reason the climit re-exec existed.
+#
+# SASHIKO_TMPDIR is a DEDICATED sashiko scratch so sashiko-cleanup can clear it
+# safely without touching the shared ~/.cache/claude-scratch root.
+set -euo pipefail
+
+hash=${1:?usage: sashiko-run <commit-hash>}
+here=$(dirname "$(readlink -f "$0")")
+tmp="${SASHIKO_TMPDIR:-$HOME/.cache/claude-scratch/sashiko}"
+mem="${SASHIKO_MEM_LIMIT:-2G}"
+mkdir -p "$tmp"
+
+# --workdir "$here": sashiko-cli loads Settings.toml from CWD, and a transient
+# systemd unit does not inherit ours, so run the unit in the sashiko dir.
+exec run-singleton --name sashiko --mem "$mem" --workdir "$here" \
+	--cleanup "env SASHIKO_TMPDIR='$tmp' '$here/sashiko-cleanup'" \
+	-- env SASHIKO_UNDER_CLIMIT=1 SASHIKO_TMPDIR="$tmp" \
+	   "$here/sashiko-watchdog.sh" "$hash"
