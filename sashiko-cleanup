@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# sashiko-cleanup -- idempotently prune sashiko's orphaned git worktrees and its
+# dedicated scratch. Safe to run anytime (before a run, or from run-singleton's
+# ExecStopPost on any exit). It only touches the sashiko repo's worktrees that
+# live under sashiko's OWN tmp dir, and only clears a DEDICATED sashiko scratch
+# dir -- never the shared ~/.cache/claude-scratch root, never other repos' or
+# the ws-* worktrees.
+set -u
+repo="${SASHIKO_REPO:-/home/oleksij/tmp/linux.oper}"
+tmp="${SASHIKO_TMPDIR:-$HOME/.cache/claude-scratch/sashiko}"
+
+# Guard: refuse to clear a shared scratch root; operate only on a dedicated dir.
+case "$tmp" in
+	"$HOME/.cache/claude-scratch" | "$HOME/.cache/claude-scratch/" | /tmp | /tmp/ | "$HOME" | /)
+		echo "sashiko-cleanup: refusing to clear non-dedicated dir '$tmp'" >&2
+		exit 1 ;;
+esac
+
+# 1) Unregister sashiko worktrees (registered in the repo) that live under our
+#    tmp, then prune stale admin entries. git-aware -- never rm-s a live tree.
+if [ -d "$repo" ]; then
+	git -C "$repo" worktree list --porcelain 2>/dev/null \
+		| awk '/^worktree /{print $2}' \
+		| while read -r wt; do
+			case "$wt" in
+			"$tmp"/*)
+				git -C "$repo" worktree remove --force "$wt" 2>/dev/null \
+					&& echo "sashiko-cleanup: unregistered worktree $wt" ;;
+			esac
+		done
+	git -C "$repo" worktree prune 2>/dev/null || true
+fi
+
+# 2) Clear the dedicated sashiko scratch (safe: sashiko-owned dir).
+if [ -d "$tmp" ]; then
+	rm -rf -- "$tmp"/.[!.]* "$tmp"/..?* "$tmp"/* 2>/dev/null || true
+	echo "sashiko-cleanup: cleared $tmp"
+fi
+exit 0
