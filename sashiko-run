@@ -24,15 +24,31 @@
 # safely without touching the shared ~/.cache/claude-scratch root.
 set -euo pipefail
 
-hash=${1:?usage: sashiko-run <commit-hash>}
+repo=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-r|--repo) repo=$2; shift 2 ;;
+	--)        shift; break ;;
+	-*)        echo "sashiko-run: unknown option: $1" >&2; exit 64 ;;
+	*)         break ;;
+	esac
+done
+hash=${1:?usage: sashiko-run [--repo PATH] <commit-hash-or-range>}
 here=$(dirname "$(readlink -f "$0")")
 tmp="${SASHIKO_TMPDIR:-$HOME/.cache/claude-scratch/sashiko}"
 mem="${SASHIKO_MEM_LIMIT:-2G}"
 mkdir -p "$tmp"
 
+# Optional --repo overrides which tree is reviewed (default: linux.oper, set as
+# DEFAULT_REPO in sashiko-gemini.sh). It travels as SASHIKO_REPO on the `env`
+# prefix so the transient unit's gemini child inherits it; the watchdog still
+# receives only the revision as $1.
+repo_env=()
+[ -n "$repo" ] && repo_env=(SASHIKO_REPO="$repo")
+
 # --workdir "$here": sashiko-cli loads Settings.toml from CWD, and a transient
 # systemd unit does not inherit ours, so run the unit in the sashiko dir.
 exec run-singleton --name sashiko --mem "$mem" --workdir "$here" \
 	--cleanup "env SASHIKO_TMPDIR='$tmp' '$here/sashiko-cleanup'" \
-	-- env SASHIKO_UNDER_CLIMIT=1 SASHIKO_TMPDIR="$tmp" \
+	-- env SASHIKO_UNDER_CLIMIT=1 SASHIKO_TMPDIR="$tmp" "${repo_env[@]}" \
 	   "$here/sashiko-watchdog.sh" "$hash"
