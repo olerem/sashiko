@@ -9,7 +9,7 @@
 # run-singleton result sentinel (~/.cache/claude-scratch/run-singleton/sashiko.result).
 #
 # Layering, one concern each:
-#   run-singleton        -- mutex (fixed unit name), MemoryMax cap, ExecStopPost
+#   run-singleton        -- mutex (fixed unit name), memory + swap cap, ExecStopPost
 #                           cleanup + result sentinel, blocking completion.
 #     sashiko-watchdog.sh -- PROGRESS watchdog (kills a stalled review, rc=111).
 #       sashiko-gemini.sh -- the actual paid Gemini review.
@@ -37,6 +37,9 @@ hash=${1:?usage: sashiko-run [--repo PATH] <commit-hash-or-range>}
 here=$(dirname "$(readlink -f "$0")")
 tmp="${SASHIKO_TMPDIR:-$HOME/.cache/claude-scratch/sashiko}"
 mem="${SASHIKO_MEM_LIMIT:-2G}"
+# A review peaks at the 2G RAM cap and has swapped up to 1.8G on top; give it
+# a bounded swap allowance rather than the whole swap file.
+swap="${SASHIKO_SWAP_LIMIT:-2G}"
 mkdir -p "$tmp"
 
 # Optional --repo overrides which tree is reviewed (default: linux.oper, set as
@@ -48,7 +51,7 @@ repo_env=()
 
 # --workdir "$here": sashiko-cli loads Settings.toml from CWD, and a transient
 # systemd unit does not inherit ours, so run the unit in the sashiko dir.
-exec run-singleton --name sashiko --mem "$mem" --workdir "$here" \
+exec run-singleton --name sashiko --mem "$mem" --swap "$swap" --workdir "$here" \
 	--cleanup "env SASHIKO_TMPDIR='$tmp' '$here/sashiko-cleanup'" \
 	-- env SASHIKO_UNDER_CLIMIT=1 SASHIKO_TMPDIR="$tmp" "${repo_env[@]}" \
 	   "$here/sashiko-watchdog.sh" "$hash"
