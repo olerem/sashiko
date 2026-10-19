@@ -210,8 +210,15 @@ repository_path = "third_party/linux"
 # check_all_branches = true
 # only_branches = []
 
+# concurrency: how many patches ONE sashiko instance reviews in parallel.
+# Intra-instance parallelism is fine; the cap here is only laptop memory. 16
+# fired 16 concurrent ~900k-token Gemini interactions and OOM'd (SIGTERM) this
+# 5 GB box. 4 keeps meaningful parallelism within one instance while surviving
+# the RAM cap; tune up if the box tolerates it, down if a run still OOMs.
+# (Serialising sashiko is done at the INSTANCE level -- run only one sashiko at a
+# time -- not by crippling this to 1.)
 [review]
-concurrency = 16
+concurrency = 4
 worktree_dir = "review_trees"
 timeout_seconds = 7200
 max_retries = 3
